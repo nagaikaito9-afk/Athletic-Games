@@ -376,9 +376,6 @@ function animate() {
     camera.position.z = 12;
     camera.lookAt(camera.position.x, camera.position.y - 1, 0);
 
-    // 高度の更新
-    document.getElementById('height-display').innerText = Math.max(0, Math.floor(playerGroup.position.y)).toString();
-
     renderer.render(scene, camera);
 }
 

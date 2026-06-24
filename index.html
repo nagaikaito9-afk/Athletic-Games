@@ -3,23 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3Dアスレチックゲーム</title>
+    <title>3Dアクションゲーム</title>
     <link rel="stylesheet" href="style.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
     <div id="ui-container">
         <div class="controls">
-            <p>操作: [←] [→]で移動 / [スペース]でジャンプ</p>
+            <p>操作: [←] [→]で移動 / [スペース]でジャンプ / [↑]でドアに入る</p>
             <button id="save-btn">セーブ</button>
             <button id="load-btn">ロード</button>
-            <button id="reset-btn">最初から</button>
         </div>
         <div class="score-board">
-            高度: <span id="height-display">0</span> m
+            HP: <span id="hp-display">10</span> / 10<br>
+            状態: <span id="stage-display">マップ</span><br>
+            <span id="action-hint" style="color: red; font-weight: bold;"></span>
         </div>
     </div>
-    
     <script src="script.js"></script>
 </body>
 </html>

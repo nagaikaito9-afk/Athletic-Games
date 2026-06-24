@@ -3,27 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>2Dカービィ風アクション</title>
+    <title>2Dアクションゲーム - カービィ風</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <div id="start-screen">
+        <h1>カービィ風 アスレチック</h1>
+        <p>画面をクリックしてゲームスタート！</p>
+    </div>
+
+    <div id="custom-message" style="display: none;"></div>
+
     <div id="ui-container">
         <div class="controls">
-            <p>操作: [← / →] または [A / D] で移動<br>
-               [スペース] または [↑ / W] でジャンプ・空中でホバリング<br>
-               ドアの前で [↑] または [W] で入る</p>
+            <p>操作: [← / →] または [A / D] 移動<br>
+               [スペース / W / ↑] ジャンプ・ホバリング<br>
+               ドアの前で [↑ / W] 入る<br>
+               <span style="color: #E91E63; font-weight: 900;">[ Z または K ] 吸い込み / 吐き出し</span></p>
             <button id="save-btn">セーブ</button>
             <button id="load-btn">ロード</button>
         </div>
         <div class="score-board">
             HP: <span id="hp-display">10</span> / 10<br>
-            状態: <span id="stage-display">マップ</span><br>
+            場所: <span id="stage-display">マップ</span><br>
             <span id="action-hint" style="color: red; font-weight: bold;"></span>
         </div>
     </div>
     
     <canvas id="game-canvas"></canvas>
-    
     <script src="script.js"></script>
 </body>
 </html>

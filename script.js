@@ -1,499 +1,461 @@
-// --- 基本設定とリアルな描画設定 ---
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x5CB3FF); // 鮮やかな空色
-scene.fog = new THREE.FogExp2(0x5CB3FF, 0.015);
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
 
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-document.body.appendChild(renderer.domElement);
-
-const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
-dirLight.position.set(10, 20, 15);
-dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
-scene.add(dirLight);
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-
-// --- プログラムでテクスチャ（模様）を生成する関数 ---
-// 画像ファイルを使わず、ブロックの種類を視覚的にわかりやすくします
-function createTexture(type) {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 256;
-    const ctx = canvas.getContext('2d');
-
-    if (type === 'solid') {
-        // レンガ模様（普通の足場）
-        ctx.fillStyle = '#8BC34A'; ctx.fillRect(0, 0, 256, 256);
-        ctx.strokeStyle = '#558B2F'; ctx.lineWidth = 6;
-        for (let i = 0; i < 4; i++) {
-            ctx.beginPath(); ctx.moveTo(0, i * 64); ctx.lineTo(256, i * 64); ctx.stroke();
-            for (let j = 0; j < 4; j++) {
-                let offset = (i % 2 === 0) ? 0 : 32;
-                ctx.beginPath(); ctx.moveTo(j * 64 + offset, i * 64); ctx.lineTo(j * 64 + offset, i * 64 + 64); ctx.stroke();
-            }
-        }
-    } else if (type === 'moving') {
-        // しましま・矢印模様（動く床）
-        ctx.fillStyle = '#9C27B0'; ctx.fillRect(0, 0, 256, 256);
-        ctx.fillStyle = '#E1BEE7';
-        for (let i = 0; i < 256; i += 64) ctx.fillRect(i, 0, 32, 256);
-    } else if (type === 'oneway') {
-        // 上向き矢印模様（下からすり抜けられる床）
-        ctx.fillStyle = '#FF9800'; ctx.fillRect(0, 0, 256, 256);
-        ctx.fillStyle = '#FFE0B2';
-        ctx.beginPath(); ctx.moveTo(128, 40); ctx.lineTo(200, 160); ctx.lineTo(56, 160); ctx.fill();
-        ctx.fillRect(108, 160, 40, 60);
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    return texture;
+// 画面サイズに合わせる
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 }
+window.addEventListener('resize', resize);
+resize();
 
-const textures = {
-    solid: createTexture('solid'),
-    moving: createTexture('moving'),
-    oneway: createTexture('oneway')
-};
+// --- キー入力処理 (WASD + 矢印対応) ---
+const keys = { left: false, right: false, up: false, jump: false };
+const prevKeys = { jump: false, up: false }; // 押しっぱなし判定用
 
-// --- 背景の雲（飾り） ---
-function createClouds() {
-    const cloudGeo = new THREE.SphereGeometry(1.5, 16, 16);
-    const cloudMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, transparent: true, opacity: 0.8 });
-    for (let i = 0; i < 20; i++) {
-        const cloud = new THREE.Group();
-        for (let j = 0; j < 3; j++) {
-            const puff = new THREE.Mesh(cloudGeo, cloudMat);
-            puff.position.set(j * 1.2 - 1.2, Math.random() * 0.5, Math.random() * 1 - 0.5);
-            puff.scale.setScalar(Math.random() * 0.5 + 0.5);
-            cloud.add(puff);
-        }
-        cloud.position.set(Math.random() * 80 - 10, Math.random() * 10 + 5, -15 - Math.random() * 10);
-        scene.add(cloud);
-    }
-}
-createClouds();
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = true;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = true;
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') { keys.up = true; keys.jump = true; }
+    if (e.code === 'Space') keys.jump = true;
+});
+
+window.addEventListener('keyup', (e) => {
+    if (e.code === 'ArrowLeft' || e.code === 'KeyA') keys.left = false;
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') keys.right = false;
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') { keys.up = false; keys.jump = false; }
+    if (e.code === 'Space') keys.jump = false;
+});
 
 // --- ゲーム状態管理 ---
 let gameState = 'hub';
-let hp = 10;
-const maxHp = 10;
-let invincibleTimer = 0;
-
-// --- プレイヤーの作成（目をつけて向きをわかりやすく） ---
-const playerGroup = new THREE.Group();
-const bodyMat = new THREE.MeshStandardMaterial({ color: 0x2196F3, roughness: 0.3 });
-const body = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1, 16), bodyMat);
-body.castShadow = true;
-
-const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 16, 16), new THREE.MeshStandardMaterial({ color: 0xFFEB3B }));
-head.position.y = 0.7;
-head.castShadow = true;
-
-// 目
-const eyeGeo = new THREE.SphereGeometry(0.06, 8, 8);
-const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
-const eyeR = new THREE.Mesh(eyeGeo, eyeMat); eyeR.position.set(0.15, 0.75, 0.3);
-const eyeL = new THREE.Mesh(eyeGeo, eyeMat); eyeL.position.set(-0.15, 0.75, 0.3);
-
-playerGroup.add(body, head, eyeR, eyeL);
-scene.add(playerGroup);
-
-let pVelocity = { x: 0, y: 0 };
-const gravity = 0.015;
-const jumpPower = 0.36;
-const moveSpeed = 0.15;
-let isGrounded = false;
-let ridingPlatform = null;
-let facingRight = true; // プレイヤーの向き
-
-// --- ステージ構成要素 ---
+let camera = { x: 0, y: 0 };
 let platforms = [];
 let enemies = [];
 let doors = [];
 let goals = [];
 
+// --- プレイヤーの設定 ---
+const player = {
+    x: 100, y: 100, w: 40, h: 40,
+    vx: 0, vy: 0,
+    speed: 5, jumpPower: 12, hoverPower: 6, gravity: 0.6,
+    isGrounded: false, isHovering: false,
+    facingRight: true,
+    hp: 10, maxHp: 10, invincibleTimer: 0
+};
+
 // --- オブジェクト生成関数 ---
 function createPlatform(x, y, w, h, type = 'solid', moveData = null) {
-    const group = new THREE.Group();
-    group.position.set(x, y, 0);
-
-    if (type === 'damage') {
-        // ダメージ床は「土台 ＋ トゲトゲ（円錐）」で表現
-        const baseGeo = new THREE.BoxGeometry(w, h * 0.5, 2);
-        const baseMat = new THREE.MeshStandardMaterial({ color: 0x333333 });
-        const base = new THREE.Mesh(baseGeo, baseMat);
-        base.position.y = -h * 0.25;
-        base.castShadow = true; group.add(base);
-
-        const spikeGeo = new THREE.ConeGeometry(0.4, h * 0.5, 8);
-        const spikeMat = new THREE.MeshStandardMaterial({ color: 0xF44336, metalness: 0.5 });
-        const spikeCount = Math.floor(w);
-        for (let i = 0; i < spikeCount; i++) {
-            const spike = new THREE.Mesh(spikeGeo, spikeMat);
-            spike.position.set((i - spikeCount / 2 + 0.5) * (w / spikeCount), h * 0.25, 0);
-            spike.castShadow = true; group.add(spike);
-        }
-    } else {
-        const geo = new THREE.BoxGeometry(w, h, 2);
-        const mat = new THREE.MeshStandardMaterial({ map: textures[type] });
-        mat.map.repeat.set(w / 2, h / 2); // テクスチャのサイズ調整
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.castShadow = true; mesh.receiveShadow = true;
-        group.add(mesh);
-    }
-
-    scene.add(group);
-    platforms.push({ mesh: group, x, y, w, h, type, moveData, startX: x, startY: y, time: 0 });
+    platforms.push({ x, y, w, h, type, moveData, startX: x, startY: y, time: 0 });
 }
 
 function createEnemy(x, y, type = 'walker') {
-    const group = new THREE.Group();
-    group.position.set(x, y, 0);
-
-    if (type === 'walker') {
-        // 歩く敵（スライム風の半球）
-        const geo = new THREE.SphereGeometry(0.5, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
-        const mat = new THREE.MeshStandardMaterial({ color: 0x4CAF50, roughness: 0.1 });
-        const body = new THREE.Mesh(geo, mat);
-        body.position.y = -0.5; body.castShadow = true; group.add(body);
-        
-        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), new THREE.MeshBasicMaterial({color: 0xffffff}));
-        eye.position.set(0, -0.2, 0.45);
-        const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), new THREE.MeshBasicMaterial({color: 0x000000}));
-        pupil.position.set(0, -0.2, 0.52);
-        group.add(eye, pupil);
-    } else {
-        // 跳ねる敵（バネ付きブロック風）
-        const geo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
-        const mat = new THREE.MeshStandardMaterial({ color: 0xFF5722, metalness: 0.5 });
-        const body = new THREE.Mesh(geo, mat);
-        body.castShadow = true; group.add(body);
-        
-        const spring = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.5, 8), new THREE.MeshStandardMaterial({color: 0x999999, wireframe: true}));
-        spring.position.y = -0.65; group.add(spring);
-    }
-
-    scene.add(group);
-    enemies.push({ mesh: group, x, y, w: 1, h: type==='walker'?1:1.3, type, vx: 0.05, vy: 0 });
+    enemies.push({ x, y, w: 40, h: 40, type, vx: 2, vy: 0, startX: x });
 }
 
-function createDoor(x, y, targetStage) {
-    const group = new THREE.Group();
-    group.position.set(x, y + 0.75, -1);
-    
-    // ドア枠と扉
-    const door = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.5, 0.5), new THREE.MeshStandardMaterial({ color: 0x5D4037 }));
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.15), new THREE.MeshStandardMaterial({ color: 0xFFD700 }));
-    knob.position.set(0.5, 0, 0.3);
-    
-    group.add(door, knob);
-    scene.add(group);
-    doors.push({ mesh: group, x, y, w: 1.5, h: 2.5, target: targetStage });
+function createDoor(x, y, target) {
+    doors.push({ x, y, w: 60, h: 80, target });
 }
 
 function createGoal(x, y) {
-    const group = new THREE.Group();
-    group.position.set(x, y + 1, 0);
-    
-    const starShape = new THREE.Shape();
-    // 星型の頂点計算
-    for(let i=0; i<10; i++) {
-        let r = i%2===0 ? 0.8 : 0.3;
-        let a = (Math.PI/5) * i;
-        if(i===0) starShape.moveTo(Math.sin(a)*r, Math.cos(a)*r);
-        else starShape.lineTo(Math.sin(a)*r, Math.cos(a)*r);
-    }
-    const geo = new THREE.ExtrudeGeometry(starShape, { depth: 0.2, bevelEnabled: true, bevelThickness: 0.05 });
-    const mat = new THREE.MeshStandardMaterial({ color: 0xFFEB3B, emissive: 0x888800 });
-    const star = new THREE.Mesh(geo, mat);
-    
-    group.add(star);
-    scene.add(group);
-    goals.push({ mesh: group, x, y, w: 1.6, h: 1.6 });
+    goals.push({ x, y, w: 60, h: 60 });
 }
 
 // --- ステージ構築 ---
 function clearScene() {
-    [...platforms, ...enemies, ...doors, ...goals].forEach(obj => {
-        scene.remove(obj.mesh);
-    });
     platforms = []; enemies = []; doors = []; goals = [];
-    ridingPlatform = null;
+    player.vx = 0; player.vy = 0; player.isHovering = false;
 }
 
+// マップ（5つのドア）
 function loadMap() {
     clearScene(); gameState = 'hub';
     document.getElementById('stage-display').innerText = 'マップ（ハブ）';
-    playerGroup.position.set(0, 2, 0); pVelocity = { x: 0, y: 0 };
+    player.x = 200; player.y = 300;
 
-    createPlatform(5, 0, 30, 1, 'solid');
-    createDoor(0, 0.5, 'stage1');
-    createDoor(5, 0.5, 'stage2');
-    createDoor(10, 0.5, 'stage3');
+    createPlatform(0, 500, 1500, 100, 'solid');
+    createDoor(150, 420, 'stage1'); // チュートリアル
+    createDoor(400, 420, 'stage2'); // ホバリングの練習
+    createDoor(650, 420, 'stage3'); // 動く床
+    createDoor(900, 420, 'stage4'); // 敵だらけ
+    createDoor(1150, 420, 'stage5'); // 総合テスト
 }
 
 function loadStage1() {
     clearScene(); gameState = 'stage1';
     document.getElementById('stage-display').innerText = 'ステージ1 (チュートリアル)';
-    playerGroup.position.set(0, 2, 0); pVelocity = { x: 0, y: 0 };
+    player.x = 100; player.y = 300;
 
-    createPlatform(0, 0, 8, 1, 'solid');
-    createPlatform(10, 0, 6, 1, 'solid');
-    createEnemy(10, 2, 'walker');
-    createPlatform(15, 2, 2, 0.5, 'oneway');
-    createPlatform(18, 4, 2, 0.5, 'oneway');
-    createPlatform(24, 0, 10, 1, 'damage');
-    createPlatform(24, 4, 3, 0.5, 'moving', { speedX: 0.05, rangeX: 3, speedY: 0, rangeY: 0 });
-    createPlatform(31, 4, 5, 1, 'solid');
-    createGoal(32, 4.5);
+    createPlatform(50, 500, 400, 100, 'solid');
+    createEnemy(300, 460, 'walker');
+    createPlatform(550, 500, 300, 100, 'solid');
+    createPlatform(650, 400, 100, 20, 'oneway');
+    createPlatform(950, 500, 400, 100, 'solid');
+    createGoal(1150, 440);
 }
 
 function loadStage2() {
     clearScene(); gameState = 'stage2';
-    document.getElementById('stage-display').innerText = 'ステージ2 (縦の試練)';
-    playerGroup.position.set(0, 2, 0); pVelocity = { x: 0, y: 0 };
+    document.getElementById('stage-display').innerText = 'ステージ2 (大空の散歩)';
+    player.x = 100; player.y = 300;
 
-    createPlatform(0, 0, 6, 1, 'solid');
-    createPlatform(-2, 3, 3, 0.5, 'oneway');
-    createPlatform(3, 6, 3, 0.5, 'oneway');
-    createPlatform(-2, 9, 3, 0.5, 'oneway');
-    createPlatform(4, 11, 3, 0.5, 'moving', { speedX: 0, rangeX: 0, speedY: 0.04, rangeY: 3 });
-    createPlatform(10, 14, 6, 1, 'solid');
-    createEnemy(10, 16, 'jumper');
-    createGoal(11, 14.5);
+    createPlatform(50, 500, 200, 100, 'solid');
+    createPlatform(400, 400, 150, 20, 'solid');
+    createPlatform(700, 250, 150, 20, 'solid');
+    createPlatform(1000, 100, 150, 20, 'solid');
+    createPlatform(1300, 100, 200, 100, 'solid');
+    createGoal(1400, 40);
 }
 
 function loadStage3() {
     clearScene(); gameState = 'stage3';
-    document.getElementById('stage-display').innerText = 'ステージ3 (アスレチックマスター)';
-    playerGroup.position.set(0, 2, 0); pVelocity = { x: 0, y: 0 };
+    document.getElementById('stage-display').innerText = 'ステージ3 (アスレチック)';
+    player.x = 100; player.y = 300;
 
-    createPlatform(0, 0, 4, 1, 'solid');
-    createPlatform(6, 0, 3, 0.5, 'moving', { speedX: 0.05, rangeX: 3, speedY: 0, rangeY: 0 });
-    createPlatform(13, 2, 4, 1, 'solid');
-    createEnemy(13, 4, 'jumper');
-    createPlatform(21, 0, 12, 1, 'damage'); 
-    createPlatform(18, 4, 2, 0.5, 'oneway');
-    createPlatform(21, 5, 2, 0.5, 'oneway');
-    createPlatform(24, 6, 2, 0.5, 'oneway');
-    createPlatform(28, 8, 3, 0.5, 'moving', { speedX: 0, rangeX: 0, speedY: 0.05, rangeY: 3 });
-    createPlatform(34, 10, 5, 1, 'solid');
-    createGoal(34, 10.5);
+    createPlatform(50, 500, 200, 100, 'solid');
+    createPlatform(300, 500, 150, 20, 'moving', { speedX: 2, rangeX: 100, speedY: 0, rangeY: 0 });
+    createPlatform(650, 400, 150, 20, 'moving', { speedX: 0, rangeX: 0, speedY: 2, rangeY: 100 });
+    createPlatform(950, 200, 300, 100, 'solid');
+    createEnemy(1050, 160, 'walker');
+    createGoal(1150, 140);
 }
 
-function takeDamage() {
-    if (invincibleTimer <= 0) {
-        hp -= 1;
-        document.getElementById('hp-display').innerText = hp;
-        invincibleTimer = 60;
-        pVelocity.y = 0.3; 
-        body.material.color.setHex(0xff0000);
+function loadStage4() {
+    clearScene(); gameState = 'stage4';
+    document.getElementById('stage-display').innerText = 'ステージ4 (敵の群れ)';
+    player.x = 100; player.y = 300;
 
-        if (hp <= 0) {
+    createPlatform(50, 500, 1500, 100, 'solid');
+    createEnemy(400, 460, 'walker');
+    createEnemy(600, 460, 'jumper');
+    createEnemy(800, 460, 'walker');
+    createEnemy(1000, 460, 'jumper');
+    createPlatform(1200, 400, 200, 100, 'solid');
+    createGoal(1300, 340);
+}
+
+function loadStage5() {
+    clearScene(); gameState = 'stage5';
+    document.getElementById('stage-display').innerText = 'ステージ5 (マスターへの道)';
+    player.x = 100; player.y = 300;
+
+    createPlatform(50, 500, 200, 100, 'solid');
+    createPlatform(300, 600, 800, 50, 'damage'); // 下に落ちるとダメージ
+    createPlatform(350, 400, 100, 20, 'moving', { speedX: 3, rangeX: 80, speedY: 0, rangeY: 0 });
+    createEnemy(350, 360, 'jumper'); // 動く床に乗る敵
+    createPlatform(600, 250, 100, 20, 'moving', { speedX: 0, rangeX: 0, speedY: 3, rangeY: 100 });
+    createPlatform(850, 150, 100, 20, 'oneway');
+    createPlatform(1100, 200, 300, 100, 'solid');
+    createGoal(1250, 140);
+}
+
+// --- ダメージ処理 ---
+function takeDamage() {
+    if (player.invincibleTimer <= 0) {
+        player.hp -= 1;
+        document.getElementById('hp-display').innerText = player.hp;
+        player.invincibleTimer = 60; // 60フレーム無敵
+        player.vy = -8; // 大きくノックバック
+
+        if (player.hp <= 0) {
             alert("ゲームオーバー！マップに戻ります。");
-            hp = maxHp; document.getElementById('hp-display').innerText = hp;
+            player.hp = player.maxHp;
+            document.getElementById('hp-display').innerText = player.hp;
             loadMap();
         }
     }
 }
 
-// --- 入力処理 ---
-const keys = { left: false, right: false, jump: false, up: false };
-window.addEventListener('keydown', (e) => {
-    if (e.code === 'ArrowLeft') { keys.left = true; facingRight = false; }
-    if (e.code === 'ArrowRight') { keys.right = true; facingRight = true; }
-    if (e.code === 'Space') keys.jump = true;
-    if (e.code === 'ArrowUp') keys.up = true;
-});
-window.addEventListener('keyup', (e) => {
-    if (e.code === 'ArrowLeft') keys.left = false;
-    if (e.code === 'ArrowRight') keys.right = false;
-    if (e.code === 'Space') keys.jump = false;
-    if (e.code === 'ArrowUp') keys.up = false;
-});
+// --- 物理演算と更新 ---
+function update() {
+    // 無敵タイマー
+    if (player.invincibleTimer > 0) player.invincibleTimer--;
 
-// セーブ・ロード
-document.getElementById('save-btn').addEventListener('click', () => {
-    localStorage.setItem('3d_save', JSON.stringify({ state: gameState, x: playerGroup.position.x, y: playerGroup.position.y, hp: hp }));
-    alert('セーブしました！');
-});
-document.getElementById('load-btn').addEventListener('click', () => {
-    const data = JSON.parse(localStorage.getItem('3d_save'));
-    if (data) {
-        if (data.state === 'hub') loadMap();
-        else if (data.state === 'stage1') loadStage1();
-        else if (data.state === 'stage2') loadStage2();
-        else if (data.state === 'stage3') loadStage3();
-        playerGroup.position.set(data.x, data.y, 0);
-        hp = data.hp; document.getElementById('hp-display').innerText = hp;
-    }
-});
+    // 左右移動
+    if (keys.left) { player.vx = -player.speed; player.facingRight = false; }
+    else if (keys.right) { player.vx = player.speed; player.facingRight = true; }
+    else { player.vx = 0; }
 
-const isOverlap = (px, py, pw, ph, ox, oy, ow, oh) => {
-    return Math.abs(px - ox) < (pw + ow) / 2 && Math.abs(py - oy) < (ph + oh) / 2;
-};
-
-// --- メインループ ---
-function animate() {
-    requestAnimationFrame(animate);
-
-    // プレイヤーの向きを滑らかに変更
-    const targetRot = facingRight ? 0 : Math.PI;
-    playerGroup.rotation.y += (targetRot - playerGroup.rotation.y) * 0.2;
-
-    if (invincibleTimer > 0) {
-        invincibleTimer--;
-        playerGroup.visible = (invincibleTimer % 10 < 5);
-        if (invincibleTimer === 0) {
-            playerGroup.visible = true;
-            body.material.color.setHex(0x2196F3);
+    // ジャンプ＆ホバリング（多段ジャンプ）
+    if (keys.jump && !prevKeys.jump) {
+        if (player.isGrounded) {
+            player.vy = -player.jumpPower;
+            player.isGrounded = false;
+        } else {
+            // 空中にいるときはホバリング
+            player.isHovering = true;
+            player.vy = -player.hoverPower;
         }
     }
+    
+    // 地面にいるときはホバリング解除
+    if (player.isGrounded) player.isHovering = false;
 
+    // 重力（ホバリング中は落下速度が少し緩やかになる）
+    if (player.isHovering && player.vy > 0) {
+        player.vy += player.gravity * 0.5; 
+    } else {
+        player.vy += player.gravity;
+    }
+
+    // 動く床の更新とプレイヤーの追従
+    let ridingPlatform = null;
     platforms.forEach(p => {
-        if (p.type === 'moving' && p.moveData) {
+        if (p.type === 'moving') {
             p.time += 0.05;
             let oldX = p.x; let oldY = p.y;
-            p.x = p.startX + Math.sin(p.time * p.moveData.speedX * 20) * p.moveData.rangeX;
-            p.y = p.startY + Math.sin(p.time * p.moveData.speedY * 20) * p.moveData.rangeY;
-            p.mesh.position.set(p.x, p.y, 0);
-
-            if (ridingPlatform === p) {
-                playerGroup.position.x += (p.x - oldX);
-                playerGroup.position.y += (p.y - oldY);
+            p.x = p.startX + Math.sin(p.time * p.moveData.speedX) * p.moveData.rangeX;
+            p.y = p.startY + Math.sin(p.time * p.moveData.speedY) * p.moveData.rangeY;
+            
+            // 床に乗っている場合、一緒に動かす
+            if (player.isGrounded && player.y + player.h === oldY && player.x + player.w > oldX && player.x < oldX + p.w) {
+                player.x += (p.x - oldX);
+                player.y += (p.y - oldY);
+                ridingPlatform = p;
             }
         }
     });
 
-    let prevX = playerGroup.position.x;
-    if (keys.left) playerGroup.position.x -= moveSpeed;
-    if (keys.right) playerGroup.position.x += moveSpeed;
-
-    const pWidth = 0.8; const pHeight = 1.7;
-
+    // --- 当たり判定（X軸） ---
+    player.x += player.vx;
     platforms.forEach(p => {
-        if (p.type === 'oneway') return; 
-        if (isOverlap(playerGroup.position.x, playerGroup.position.y, pWidth, pHeight - 0.2, p.x, p.y, p.w, p.h)) {
+        if (p.type === 'oneway') return;
+        if (checkCollision(player, p)) {
             if (p.type === 'damage') takeDamage();
-            else playerGroup.position.x = prevX;
+            else {
+                if (player.vx > 0) player.x = p.x - player.w;
+                if (player.vx < 0) player.x = p.x + p.w;
+            }
         }
     });
 
-    let prevY = playerGroup.position.y;
-    if (keys.jump && isGrounded) {
-        pVelocity.y = jumpPower;
-        isGrounded = false;
-        ridingPlatform = null; 
-    }
+    // --- 当たり判定（Y軸） ---
+    player.y += player.vy;
+    player.isGrounded = false;
     
-    pVelocity.y -= gravity;
-    playerGroup.position.y += pVelocity.y;
-
-    isGrounded = false; ridingPlatform = null; 
-
     platforms.forEach(p => {
-        if (isOverlap(playerGroup.position.x, playerGroup.position.y, pWidth, pHeight, p.x, p.y, p.w, p.h)) {
-            if (p.type === 'damage') {
-                takeDamage();
-            } else if (p.type === 'oneway') {
-                if (pVelocity.y < 0 && prevY - pHeight/2 >= p.y + p.h/2 - 0.2) {
-                    playerGroup.position.y = p.y + p.h/2 + pHeight/2;
-                    pVelocity.y = 0; isGrounded = true; ridingPlatform = p;
+        if (checkCollision(player, p)) {
+            if (p.type === 'damage') takeDamage();
+            else if (p.type === 'oneway') {
+                if (player.vy > 0 && player.y - player.vy + player.h <= p.y + 10) {
+                    player.y = p.y - player.h;
+                    player.vy = 0;
+                    player.isGrounded = true;
                 }
             } else {
-                if (pVelocity.y < 0 && prevY - pHeight/2 >= p.y + p.h/2 - 0.4) {
-                    playerGroup.position.y = p.y + p.h/2 + pHeight/2;
-                    pVelocity.y = 0; isGrounded = true; ridingPlatform = p;
-                } else if (pVelocity.y > 0 && prevY + pHeight/2 <= p.y - p.h/2 + 0.4) {
-                    playerGroup.position.y = prevY; pVelocity.y = 0;
+                if (player.vy > 0) { // 落下中
+                    player.y = p.y - player.h;
+                    player.vy = 0;
+                    player.isGrounded = true;
+                } else if (player.vy < 0) { // 上昇中（頭をぶつける）
+                    player.y = p.y + p.h;
+                    player.vy = 0;
                 }
             }
         }
     });
 
+    // --- 敵の更新 ---
     enemies.forEach(e => {
-        e.vy -= gravity; e.x += e.vx; e.y += e.vy;
-
+        e.vy += player.gravity; // 敵の重力
+        e.x += e.vx;
+        
         let eGrounded = false;
         platforms.forEach(p => {
-            if (p.type !== 'oneway' && isOverlap(e.x, e.y, e.w, e.h, p.x, p.y, p.w, p.h)) {
-                if (e.vy < 0) { e.y = p.y + p.h/2 + e.h/2; e.vy = 0; eGrounded = true; }
+            if (p.type !== 'oneway' && checkCollision({x:e.x, y:e.y+e.vy, w:e.w, h:e.h}, p)) {
+                if (e.vy > 0) { e.y = p.y - e.h; e.vy = 0; eGrounded = true; }
             }
         });
+        e.y += e.vy;
 
-        if (Math.abs(e.x - e.mesh.position.x) > 0) {
-           if(e.x > pWidth*10 || e.x < -pWidth*10) {
-               e.vx *= -1; 
-               e.mesh.rotation.y = e.vx > 0 ? Math.PI : 0; // 歩く方向を向く
-           }
-        }
+        // 簡易AI: 一定距離を歩いたら反転
+        if (Math.abs(e.x - e.startX) > 100) e.vx *= -1;
 
-        if (e.type === 'jumper' && eGrounded && Math.random() < 0.02) e.vy = 0.25;
+        // ジャンパー敵
+        if (e.type === 'jumper' && eGrounded && Math.random() < 0.02) e.vy = -10;
 
-        e.mesh.position.set(e.x, e.y, 0);
-
-        if (isOverlap(playerGroup.position.x, playerGroup.position.y, pWidth, pHeight, e.x, e.y, e.w, e.h)) {
-            if (pVelocity.y < 0 && prevY - pHeight/2 > e.y) {
-                e.y = -100; e.vx = 0; pVelocity.y = jumpPower * 0.8; 
+        // プレイヤーとの判定
+        if (checkCollision(player, e)) {
+            // 上から踏んだ
+            if (player.vy > 0 && player.y + player.h - player.vy <= e.y + 10) {
+                e.y = 9999; // 倒す（画面外へ）
+                player.vy = -player.jumpPower * 0.8; // 踏みジャンプ
+                player.isHovering = false;
             } else {
                 takeDamage();
             }
         }
     });
 
+    // --- ドアとゴール判定 ---
     const hintUI = document.getElementById('action-hint');
-    if (hintUI) hintUI.innerText = "";
-    
+    hintUI.innerText = "";
+
     if (gameState === 'hub') {
         doors.forEach(d => {
-            if (isOverlap(playerGroup.position.x, playerGroup.position.y, pWidth, pHeight, d.x, d.y, d.w, d.h)) {
-                if (hintUI) hintUI.innerText = "↑キーで " + d.target + " へ";
-                if (keys.up) {
-                    keys.up = false;
+            if (checkCollision(player, d)) {
+                hintUI.innerText = "↑またはWキーで " + d.target + " へ";
+                if (keys.up && !prevKeys.up) {
                     if (d.target === 'stage1') loadStage1();
                     if (d.target === 'stage2') loadStage2();
                     if (d.target === 'stage3') loadStage3();
+                    if (d.target === 'stage4') loadStage4();
+                    if (d.target === 'stage5') loadStage5();
                 }
             }
         });
     } else {
         goals.forEach(g => {
-            g.mesh.rotation.y += 0.05; // ゴールの星を回転
-            if (isOverlap(playerGroup.position.x, playerGroup.position.y, pWidth, pHeight, g.x, g.y, g.w, g.h)) {
+            if (checkCollision(player, g)) {
                 alert("ステージクリア！マップに戻ります。");
-                hp = maxHp; document.getElementById('hp-display').innerText = hp;
+                player.hp = player.maxHp;
+                document.getElementById('hp-display').innerText = player.hp;
                 loadMap();
             }
         });
     }
 
-    if (playerGroup.position.y < -10) {
+    // 落下時の復帰
+    if (player.y > 1000) {
         takeDamage();
-        if (hp > 0) {
-            playerGroup.position.set(0, 5, 0);
-            pVelocity.y = 0; ridingPlatform = null;
+        if (player.hp > 0) {
+            player.x = 100; player.y = 300; player.vy = 0;
         }
     }
 
-    camera.position.x += (playerGroup.position.x - camera.position.x) * 0.1;
-    camera.position.y += ((playerGroup.position.y + 3) - camera.position.y) * 0.1;
-    camera.position.z = 15; 
-    camera.lookAt(camera.position.x, camera.position.y - 1, 0);
+    // カメラの追従（プレイヤーを中心に）
+    camera.x += (player.x - canvas.width / 2 - camera.x) * 0.1;
+    camera.y += (player.y - canvas.height / 2 - camera.y) * 0.1;
 
-    renderer.render(scene, camera);
+    // 前回のキー状態を保存
+    prevKeys.jump = keys.jump;
+    prevKeys.up = keys.up;
 }
 
-window.addEventListener('resize', () => {
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
+// 矩形の当たり判定ユーティリティ
+function checkCollision(r1, r2) {
+    return r1.x < r2.x + r2.w && r1.x + r1.w > r2.x &&
+           r1.y < r2.y + r2.h && r1.y + r1.h > r2.y;
+}
+
+// --- 描画処理（画像なしでかわいく描画） ---
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    ctx.save();
+    ctx.translate(-camera.x, -camera.y); // カメラ適用
+
+    // 床の描画
+    platforms.forEach(p => {
+        if (p.type === 'solid') ctx.fillStyle = '#8BC34A'; // 緑
+        if (p.type === 'moving') ctx.fillStyle = '#9C27B0'; // 紫
+        if (p.type === 'oneway') ctx.fillStyle = '#FF9800'; // オレンジ
+        if (p.type === 'damage') ctx.fillStyle = '#F44336'; // 赤（トゲ）
+        
+        ctx.fillRect(p.x, p.y, p.w, p.h);
+        
+        // 模様をつける
+        ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+        ctx.strokeRect(p.x, p.y, p.w, p.h);
+    });
+
+    // ドアの描画（星マーク付き）
+    doors.forEach(d => {
+        ctx.fillStyle = '#795548'; // 茶色
+        ctx.fillRect(d.x, d.y, d.w, d.h);
+        ctx.fillStyle = '#FFEB3B'; // 星の色
+        ctx.beginPath();
+        ctx.arc(d.x + d.w/2, d.y + d.h/2, 10, 0, Math.PI*2);
+        ctx.fill();
+    });
+
+    // ゴールの描画（大きな星）
+    goals.forEach(g => {
+        ctx.fillStyle = '#FFD700'; // 金色
+        ctx.beginPath();
+        ctx.arc(g.x + g.w/2, g.y + g.h/2 + Math.sin(Date.now() / 200) * 5, 25, 0, Math.PI*2);
+        ctx.fill();
+    });
+
+    // 敵の描画（ワドルディ風）
+    enemies.forEach(e => {
+        ctx.fillStyle = e.type === 'walker' ? '#FF9800' : '#E91E63'; // オレンジか赤
+        ctx.beginPath();
+        ctx.arc(e.x + e.w/2, e.y + e.h/2, e.w/2, 0, Math.PI*2);
+        ctx.fill();
+        
+        // 目
+        ctx.fillStyle = 'black';
+        let lookDir = e.vx > 0 ? 5 : -5;
+        ctx.beginPath(); ctx.arc(e.x + 15 + lookDir, e.y + 15, 3, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(e.x + 25 + lookDir, e.y + 15, 3, 0, Math.PI*2); ctx.fill();
+    });
+
+    // --- プレイヤー（カービィ風）の描画 ---
+    if (player.invincibleTimer % 10 < 5) { // 点滅
+        let cx = player.x + player.w / 2;
+        let cy = player.y + player.h / 2;
+        let radius = player.isHovering ? 24 : 20; // ホバリング時はぷくっと膨らむ
+
+        // 体（ピンク）
+        ctx.fillStyle = '#F48FB1';
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI*2);
+        ctx.fill();
+
+        // ほっぺ（濃いピンク）
+        ctx.fillStyle = '#E91E63';
+        let faceDir = player.facingRight ? 1 : -1;
+        ctx.beginPath(); ctx.ellipse(cx + 12 * faceDir, cy + 5, 4, 2, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx + 2 * faceDir, cy + 5, 4, 2, 0, 0, Math.PI*2); ctx.fill();
+
+        // 目（黒と白のハイライト）
+        ctx.fillStyle = 'black';
+        ctx.beginPath(); ctx.ellipse(cx + 8 * faceDir, cy - 2, 2, 6, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx - 2 * faceDir, cy - 2, 2, 6, 0, 0, Math.PI*2); ctx.fill();
+        
+        ctx.fillStyle = 'white';
+        ctx.beginPath(); ctx.arc(cx + 8 * faceDir, cy - 5, 1, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(cx - 2 * faceDir, cy - 5, 1, 0, Math.PI*2); ctx.fill();
+
+        // 足（赤）
+        ctx.fillStyle = '#F44336';
+        ctx.beginPath(); ctx.ellipse(cx - 8, cy + radius - 2, 8, 4, 0, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(cx + 8, cy + radius - 2, 8, 4, 0, 0, Math.PI*2); ctx.fill();
+    }
+
+    ctx.restore();
+}
+
+// --- メインループ ---
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+// セーブ・ロード機能
+document.getElementById('save-btn').addEventListener('click', () => {
+    localStorage.setItem('2d_save', JSON.stringify({ state: gameState, x: player.x, y: player.y, hp: player.hp }));
+    alert('セーブしました！');
 });
 
+document.getElementById('load-btn').addEventListener('click', () => {
+    const data = JSON.parse(localStorage.getItem('2d_save'));
+    if (data) {
+        if (data.state === 'hub') loadMap();
+        else if (data.state === 'stage1') loadStage1();
+        else if (data.state === 'stage2') loadStage2();
+        else if (data.state === 'stage3') loadStage3();
+        else if (data.state === 'stage4') loadStage4();
+        else if (data.state === 'stage5') loadStage5();
+        
+        player.x = data.x; player.y = data.y;
+        player.hp = data.hp; document.getElementById('hp-display').innerText = player.hp;
+    }
+});
+
+// ゲーム開始
 loadMap();
-animate();
+gameLoop();

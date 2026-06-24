@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3Dアクションゲーム</title>
+    <title>2Dカービィ風アクション</title>
     <link rel="stylesheet" href="style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
     <div id="ui-container">
         <div class="controls">
-            <p>操作: [←] [→]で移動 / [スペース]でジャンプ / [↑]でドアに入る</p>
+            <p>操作: [← / →] または [A / D] で移動<br>
+               [スペース] または [↑ / W] でジャンプ・空中でホバリング<br>
+               ドアの前で [↑] または [W] で入る</p>
             <button id="save-btn">セーブ</button>
             <button id="load-btn">ロード</button>
         </div>
@@ -20,6 +21,9 @@
             <span id="action-hint" style="color: red; font-weight: bold;"></span>
         </div>
     </div>
+    
+    <canvas id="game-canvas"></canvas>
+    
     <script src="script.js"></script>
 </body>
 </html>

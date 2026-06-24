@@ -1,7 +1,7 @@
 body {
     margin: 0;
     overflow: hidden;
-    background-color: #87CEEB;
+    background-color: #87CEEB; /* 空色 */
     font-family: sans-serif;
 }
 
@@ -30,13 +30,14 @@ canvas {
     margin: 0 0 10px 0;
     font-weight: bold;
     font-size: 14px;
+    line-height: 1.4;
 }
 
 button {
     padding: 6px 12px;
     margin-right: 5px;
     border: none;
-    background-color: #4CAF50;
+    background-color: #FF69B4; /* ピンク色に */
     color: white;
     border-radius: 4px;
     cursor: pointer;
@@ -45,7 +46,7 @@ button {
 }
 
 button:hover {
-    background-color: #45a049;
+    background-color: #FF1493;
 }
 
 .score-board {

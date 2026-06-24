@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3Dアスレチックゲーム</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="ui-container">
+        <div class="controls">
+            <p>操作: [←] [→]で移動 / [スペース]でジャンプ</p>
+            <button id="save-btn">セーブ</button>
+            <button id="load-btn">ロード</button>
+            <button id="reset-btn">最初から</button>
+        </div>
+        <div class="score-board">
+            高度: <span id="height-display">0</span> m
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
